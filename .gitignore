@@ -53,5 +53,6 @@ rsconnect/
 ._*
 
 
+git_keys/
 git_key.txt
 git_key.txt.pub
