@@ -51,8 +51,3 @@ rsconnect/
 # Mac OS files
 .DS_Store
 ._*
-
-
-git_keys/
-git_key.txt
-git_key.txt.pub
