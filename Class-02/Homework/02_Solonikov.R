@@ -51,14 +51,14 @@ print(data)
 #                         'route_length', 'H_diff', 'slope', 'meanderCoeff', 'H_begin', 'H_end')
 
 # реализация через векторы
-ids <- as.vector(data$id, mode = 'numeric')    # номера пунктов
-heights <- as.vector(data$zeroLevel, mode = 'numeric')    # высоты пунктов
-start_lats <- as.vector(data$lat, mode = 'numeric')[1:nrow(data) - 1] * pi / 180    # широты начальных пунктов секций
-stop_lats <- as.vector(data$lat, mode = 'numeric')[2:nrow(data)] * pi / 180    # широты конечных пунктов секций
-start_lons <- as.vector(data$lon, mode = 'numeric')[1:nrow(data) - 1] * pi / 180    # долготы начальных пунктов секций
-stop_lons <- as.vector(data$lon, mode = 'numeric')[2:nrow(data)] * pi / 180    # долготы конечных пунктов секций
+ids <- as.numeric(data$id)    # номера пунктов
+heights <- as.numeric(data$zeroLevel)    # высоты пунктов
+start_lats <- as.numeric(data$lat)[1:nrow(data) - 1] * pi / 180    # широты начальных пунктов секций
+stop_lats <- as.numeric(data$lat)[2:nrow(data)] * pi / 180    # широты конечных пунктов секций
+start_lons <- as.numeric(data$lon)[1:nrow(data) - 1] * pi / 180    # долготы начальных пунктов секций
+stop_lons <- as.numeric(data$lon)[2:nrow(data)] * pi / 180    # долготы конечных пунктов секций
 
-distsFromSource <- as.vector(data$distFromSource, mode = 'numeric')
+distsFromSource <- as.numeric(data$distFromSource)
 start_ids <- ids[1:length(ids) - 1]    # номера начальных пунктов
 stop_ids <- ids[2:length(ids)]    # номера конечных пунктов
 section_names <- paste(data$name[start_ids], "_", data$name[stop_ids], sep = "")    # имена секций
