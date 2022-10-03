@@ -3,4 +3,4 @@ is_leap = function(year) {
 }
 
 y = as.integer(readline('Введите год: '))
-cat(ifelse(is_leap(y), 'Високосный', 'Обычный'))21
+cat(ifelse(is_leap(y), 'Високосный', 'Обычный'))
