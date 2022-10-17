@@ -2,13 +2,13 @@ library(tidyverse)
 data(storms, package = 'dplyr')
 
 storm = storms %>% 
-  filter(name == 'Katrina', year == 2005, !is.na(ts_diameter)) %>% 
+  filter(name == 'Katrina', year == 2005, !is.na(tropicalstorm_force_diameter)) %>% 
   mutate(status = factor(status, levels = c('tropical depression', 
                                             'tropical storm', 
                                             'hurricane'), 
                             ordered = TRUE),
          wind = 0.514444 * wind,
-         ts_diameter = 1.60934 * ts_diameter) %>% 
+         tropicalstorm_force_diameter = 1.60934 * tropicalstorm_force_diameter) %>% 
   arrange(year, month, day, hour)
 
 n = length(storm$pressure)
@@ -32,9 +32,9 @@ arrows(storm$pressure[-n],
 
 points(storm$pressure, storm$wind, pch = 19, 
        col = cols[storm$status],
-       cex = 2.5 * sqrt(cut(storm$ts_diameter, include.lowest = T, (0:4) * 200, labels = FALSE)))
+       cex = 2.5 * sqrt(cut(storm$tropicalstorm_force_diameter, include.lowest = T, (0:4) * 200, labels = FALSE)))
 
-text(storm$pressure, storm$wind, labels = as.integer(storm$ts_diameter),
+text(storm$pressure, storm$wind, labels = as.integer(storm$tropicalstorm_force_diameter),
      font = 2,
      cex = 0.6, col = 'white')
 
