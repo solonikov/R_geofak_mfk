@@ -1,0 +1,70 @@
+---
+title: "Классная работа 7"
+author: "Ivan Solonikov"
+date: "10/18/2022"
+output: html_document
+---
+
+## Подключение библиотек
+Подключаем библиотеки:
+```{r}
+library(googlesheets4)
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+```
+
+## Упражнение 1
+Загружаем данные
+```{r}
+tab = read_sheet("1NVwvHkWIFecLmkXQRItV3TUkvv4mm-wlaALbID1Hxvk")
+```
+Регрессия:
+```{r}
+model = lm(Fe ~ P2O5, data = tab)
+coef(model)
+```
+Корреляция
+```{r}
+cor.test(tab$Fe, tab$P2O5)
+```
+Диаграмма рассеяния:
+```{r}
+ggplot(tab, aes(x = Fe, y = P2O5)) +
+  geom_point() + 
+  geom_smooth(method = 'lm')
+```
+
+## Упражнение 2
+Загружаем данные
+```{r}
+tab2 = read_sheet("1pDenxaveJICMq070McwoTVDtwYwwWXx1n7J83GhyHIs")
+names(tab2) = c('SE', 'NW')
+```
+Приводим таблицу к длинному виду:
+```{r}
+tab_tidy = tab2 %>% 
+  rename(SE = 1, NW = 2) %>% 
+  pivot_longer(cols = 1:2,
+               names_to = 'region',
+               values_to = 'tri')
+```
+График плоттности распределения:
+```{r}
+ggplot(tab_tidy) +
+  geom_density(aes(x = tri, fill = region, alpha = 0.5))
+```
+Диаграммы размаха:
+```{r}
+ggplot(tab_tidy) +
+  geom_boxplot(aes(x = tri, fill = region))
+```
+Тесты на равенство средних и дисперсий:
+```{r}
+t.test(tab2$SE, tab2$NW)
+var.test(tab2$SE, tab2$NW)
+```
+
+
+
+
