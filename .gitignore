@@ -58,3 +58,7 @@ rsconnect/
 # R programming books
 RBooks.zip
 RBooks/
+
+# Geopackages
+*.gpkg.zip
+*.gpkg*

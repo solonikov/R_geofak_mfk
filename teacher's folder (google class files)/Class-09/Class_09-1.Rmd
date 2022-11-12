@@ -1,0 +1,34 @@
+---
+title: "Упражнение 9.1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(dplyr)
+library(mapview)
+```
+
+Создание пространственных объектов
+```{r}
+data(quakes)
+pts = st_as_sf(quakes, 
+               coords = c('long', 'lat'),
+               remove = FALSE,
+               crs = 4326)
+pts
+```
+
+Визуализация точек:
+```{r}
+plot(pts['depth'], cex = (pts$mag^2)/20, pch = 19)
+```
+
+Интерактивная визуализация точек:
+```{r}
+mapview(pts, zcol = 'depth', cex = 'mag')
+```
+
+
+

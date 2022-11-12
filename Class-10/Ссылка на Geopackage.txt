@@ -1,0 +1,2 @@
+Ссылка на Geopackage
+https://naciscdn.org/naturalearth/packages/natural_earth_vector.gpkg.zip

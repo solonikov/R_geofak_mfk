@@ -1,0 +1,58 @@
+---
+title: "Class_09-3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(stars)
+library(dplyr)
+library(mapview)
+```
+
+Изучение содержимого базы пространственных данных, загрузка данных
+```{r}
+st_layers('data/Satino.gpkg')
+
+hydro_lines = st_read('data/Satino.gpkg', 'WaterLine')
+hydro_polys = st_read('data/Satino.gpkg', 'WaterPolygon')
+roads = st_read('data/Satino.gpkg', 'Roads')
+forest = st_read('data/Satino.gpkg', 'ForestBorders')
+contours = st_read('data/Satino.gpkg', 'ContoursBasic')
+
+dem = read_stars('data/Satino_DEM.tif')
+```
+
+Визуализация данных:
+```{r}
+mapview(forest) + 
+  mapview(hydro_lines) + 
+  mapview(hydro_polys)
+```
+
+Карта через обычный plot:
+```{r}
+brks = scales::fullseq(c(min(dem[[1]], na.rm=T), max(dem[[1]], na.rm=T)), 2)
+box = st_bbox(forest) %>% st_as_sfc()
+grat = st_graticule(box)
+plot(box, #рисуем сетку (сама рамка нам не нужна)
+     axes = TRUE,
+     graticule = TRUE,
+     cex.axis = 0.8, #уменьшим подписи, чтобы не налезали друг на друга
+     main = 'Сатинский полигон', #заголовок
+     cex.main = 0.8,
+     asp = 1, #одинаковые пропорции осей
+     las = 1)
+plot(dem, 
+     breaks = brks, 
+     col = terrain.colors(length(brks)-1),
+     add = TRUE, 
+     main = NULL)
+plot(contours, col = 'brown', lwd = 0.2, add = TRUE)
+plot(hydro_lines, col = 'blue', add = TRUE)
+plot(hydro_polys, col = 'lightblue', border = 'blue', add = TRUE)
+plot(roads, col = 'orangered', add = TRUE)
+plot(grat, add = TRUE, col = 'black', lwd = 0.2)
+```
+

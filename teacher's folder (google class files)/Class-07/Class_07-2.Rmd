@@ -1,0 +1,64 @@
+---
+title: "Задание 7.2"
+author: "Timofey Samsonov"
+date: "2022-10-18"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      message = FALSE)
+```
+
+## Подключение библиотек
+
+Подключим библиотеки
+
+```{r}
+library(ggplot2)
+library(googlesheets4)
+library(dplyr)
+library(tidyr)
+```
+
+Загружаем данные
+```{r}
+tab = read_sheet('1pDenxaveJICMq070McwoTVDtwYwwWXx1n7J83GhyHIs') |> 
+  rename(SE = 1, NW = 2)
+```
+
+## Анализ данных
+
+```{r}
+tab2 = pivot_longer(
+  tab, 1:2,
+  names_to = 'region',
+  values_to = 'tri'
+)
+```
+
+Плотность распределения
+```{r}
+ggplot(tab2) +
+  geom_density(aes(x = tri, fill = region),
+               alpha = 0.5)
+```
+
+Диаграммы размаха
+```{r fig.height=2, fig.width=5}
+ggplot(tab2) +
+  geom_boxplot(aes(x = region, y = tri,
+                   fill = region),
+               alpha = 0.5) +
+  coord_flip()
+```
+
+Тесты Стьюдента и Фишера
+```{r}
+t.test(tab$SE, tab$NW)
+var.test(tab$SE, tab$NW)
+```
+
+
+
+

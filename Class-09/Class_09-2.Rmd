@@ -1,0 +1,49 @@
+---
+title: "Class_09-2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(dplyr)
+library(mapview)
+```
+
+Создание точек и трека циклона
+```{r}
+data(storms)
+
+pts = storms |>  
+  filter(name == 'Barry', year == 1983) |>  
+  arrange(month, day, hour) |>  
+  st_as_sf(coords = c('long', 'lat'),
+           crs = 4326,
+           remove = FALSE)
+
+track = st_coordinates(pts) |>  
+  st_linestring() |>  
+  st_sfc(crs = 4326)
+```
+
+Визуализация через стандартную графическую систему:
+```{r}
+pal = colorRampPalette(c("red", "blue"))
+ord = findInterval(pts$pressure, sort(pts$pressure))
+cols = pal(nrow(pts))[ord]
+
+plot(track, axes = TRUE)
+plot(pts, 
+     col = adjustcolor(cols, alpha = 0.5), 
+     cex = sqrt(pts$wind) / 2,
+     pch = 19,
+     add = TRUE)
+grid()
+```
+
+То же самое через _mapview_:
+```{r}
+mapview(track, color = 'black') + 
+  mapview(pts, cex = 'wind', zcol = 'pressure')
+```
+

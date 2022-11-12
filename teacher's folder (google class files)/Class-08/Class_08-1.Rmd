@@ -1,0 +1,59 @@
+---
+title: "Class 08"
+author: "Timofey Samsonov"
+date: "2022-10-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Задание
+
+Загрузите файл с данными по межгодичным изменениям стока на реке Мезень. Проанализируйте величину и значимость тренда, а также наличие переломного года для характеристик Wpol2 (объем половодья без грунтовой составляющей), а также Wy (суммарный сток). Постройте графики этих характеристик с кривой локальной регрессии. Что можно сказать об их соотношении с грунтовым стоком?
+
+## Подключение библиотек
+```{r}
+library(readr)
+library(trend)
+library(ggplot2)
+```
+
+## Чтение данных
+
+```{r}
+tab = read_csv('Mezen.csv')
+```
+
+## Визуализация
+
+```{r}
+ggplot(tab, aes(Year1, Wpol2)) +
+  geom_line() + 
+  geom_smooth(span = 0.1, se = FALSE) + 
+  geom_smooth(span = 0.2, se = FALSE, 
+              color = 'red')
+ggplot(tab, aes(Year1, Wy)) +
+  geom_line() + 
+  geom_smooth(span = 0.1, se = FALSE) + 
+  geom_smooth(span = 0.2, se = FALSE, 
+              color = 'red')
+```
+
+## Анализ данных
+
+Объем половодья без грунтовой составляющей
+```{r}
+mk.test(tab$Wpol2)
+pettitt.test(tab$Wpol2)
+sens.slope(tab$Wpol2)
+```
+Суммарный сток
+```{r}
+mk.test(tab$Wy)
+pettitt.test(tab$Wy)
+sens.slope(tab$Wy)
+```
+
+
