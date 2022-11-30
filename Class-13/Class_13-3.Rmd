@@ -1,0 +1,80 @@
+---
+title: "Active Faults"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(circular)
+library(NPCirc)
+library(readxl)
+library(pracma)
+```
+
+Чтение данных:
+```{r}
+faults = read_excel('data/gem_faults.xlsx') %>% 
+  mutate(cdir = conversion.circular(circular(dir, 
+                                             units = c("degrees"),
+                                             zero = pi/2, 
+                                             rotation = "clock"), 
+                                    template = 'geographics', units = 'degrees'))
+
+baikal = faults %>% 
+  filter(!str_detect(catalog_na, 'EMME'))
+
+caucasus = faults %>% 
+  filter(str_detect(catalog_na, 'EMME'))
+
+summary(baikal$cdir)
+summary(caucasus$cdir)
+```
+
+
+Визуализация:
+```{r}
+plot_dirs = function(dirs, title, subtitle) {
+  plot.circular(dirs, 
+     cex = 0.5, 
+     stack = TRUE, 
+     sep = 0.035,
+     axes = FALSE,
+     main = title,
+     sub = subtitle)
+
+  rose.diag(dirs, 
+            bins = 24, 
+            col = 'gray70',
+            border = 'gray30',
+            prop = 2, 
+            add = TRUE, 
+            tick = FALSE,
+            lwd = 0.5)
+  
+  kden = kern.den.circ(dirs)
+  peak = findpeaks(kden$y, sortstr = T)[1,2] # находим индекс самого высокого пика плотности распределения
+  modal = kden$x[peak] # извлекаем сам угол
+  modal = ifelse(modal < 0, 360 + modal, modal)
+  
+  print(modal)
+  # раскладываем на составляющие для отрисовки линии
+  xp = sin(pi * modal / 180)
+  yp = cos(pi * modal / 180)
+  
+  lines(kden, shrink = 4, # параметр shrink отвечает за масштаб радиус-вектора
+        join = F,
+        col = 'steelblue')
+  
+  lines(c(0, xp), c(0, yp),
+        lwd = 2, col = 'orangered')
+  
+  text(x = 1.4 * xp, y = 1.4 * yp, 
+       col = 'orangered',
+       labels = paste0(round(modal, 0), '°')) # приводим к целым градусам
+}
+
+plot_dirs(baikal$cdir, 'Направление активных разломов', 'Байкальская рифтовая зона')
+plot_dirs(caucasus$cdir, 'Направление активных разломов', 'Большой Кавказский хребет')
+```
+

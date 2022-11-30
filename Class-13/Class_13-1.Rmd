@@ -1,0 +1,66 @@
+---
+title: "Class_11-1"
+author: "Timofey Samsonov"
+date: "11/17/2020"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning  = FALSE)
+```
+
+Подключение библиотек
+```{r}
+library(sf)
+library(tidyverse)
+library(rcompanion)
+library(RColorBrewer)
+```
+
+
+Данные
+```{r}
+relief = st_read('data/Satino.gpkg', 'RelTypes', quiet = TRUE) %>% 
+  select(RelType, ID)
+soils = st_read('data/Satino.gpkg', 'SoilTypes', quiet = TRUE) %>% 
+  transmute(SoilSubType = paste(SoilType, SoilSubtype, sep = ' / '),
+            SoilIndex)
+```
+Оверлей
+```{r}
+inters = st_intersection(soils, relief) %>% 
+  mutate(area = st_area(.)) %>% 
+  group_by(SoilSubType, SoilIndex, RelType, ID) %>% 
+  summarise(area = sum(area)) %>% 
+  group_by(SoilSubType) %>% 
+  mutate(rel_ratio = as.vector(100*area/sum(area))) %>% 
+  ungroup()
+```
+
+Визуализация:
+```{r, fig.height = 3, fig.width = 5}
+n = length(unique(inters$RelType))
+
+colors = c(brewer.pal(n/2, 'Set3'), brewer.pal(n - n/2, 'Set1'))
+
+ggplot(inters, mapping = aes(x = SoilIndex, y = rel_ratio, fill = abbreviate(RelType, 12))) +
+  geom_col(position = 'fill') +
+  scale_fill_manual(values = colors) +
+  labs(y = 'Доля типа рельефа в площади', x = 'Подтип почвы', fill = 'Тип рельефа',
+       title = 'Пространственная взаимосвязь между почвами и рельефом') +
+  coord_flip()
+```
+Анализ ассоциации:
+```{r}
+mat = inters %>% 
+  st_drop_geometry() %>% 
+  select(-SoilSubType,-RelType,-area) %>% 
+  pivot_wider(names_from = ID, values_from = rel_ratio, values_fill = 0) %>% 
+  select(-1) %>% 
+  as.matrix()
+  
+cramerV(mat)
+```
+
+
+

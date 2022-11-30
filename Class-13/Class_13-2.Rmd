@@ -1,0 +1,41 @@
+---
+title: "Class_11-2"
+author: "Timofey Samsonov"
+date: "11/17/2020"
+output: html_document
+---
+
+Подключение библиотек, загрузка данных
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning  = FALSE)
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+
+poi = st_read("data/poi_point.gpkg", quiet = TRUE) # Точки интереса
+stations = st_read("data/metro_stations.gpkg", quiet = TRUE) # Станции метро
+
+poi.food = poi %>% 
+            dplyr::select(NAME, AMENITY) %>% 
+            filter(AMENITY %in% c("restaurant", "bar", "cafe", "pub", "fast_food"))
+head(poi.food)
+```
+
+Анализ
+```{r}
+distances = seq(50, 300, 50)
+
+stats = sapply(distances, function(d) {
+  buf = st_buffer(stations, dist = d) %>% 
+    st_union()
+  npoi = nrow(poi.food[buf, ])
+  return(npoi / units::set_units(st_area(buf), km^2))
+})
+
+qplot(distances, stats, geom = 'line')
+
+```
+
+
