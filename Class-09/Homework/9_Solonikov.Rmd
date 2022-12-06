@@ -3,3 +3,50 @@ title: "Homework 9"
 output: html_notebook
 ---
 
+Подключаем необходимые пакеты:
+```{r}
+library(tidyverse)
+library(sf)
+library(stars)
+library(readr)
+```
+Читаем данные и создаём объекты класса sf:
+```{r}
+# Координаты искомых точек
+stations <- read_csv('stations.csv') |> 
+  st_as_sf(coords = c('X', 'Y'), crs = 4326)
+
+# Координаты GPS-трека отбивки территории пашни
+field_gps <- read_csv('field.csv') |> 
+  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ')
+
+# Координаты точек поискового маршрута
+route_points <- read_csv('route.csv') |> 
+  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ')
+```
+Читаем растр Сатинского полигона:
+```{r}
+Satino <- read_stars('Snimok.tif', NA_value = 0)
+```
+
+
+
+```{r}
+read_csv('field.csv') |> 
+  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ') |>
+  summarize() |> st_cast('LINESTRING') |> st_node() |> st_polygonize() |> plot()
+  st_cast("LINESTRING") |>
+  st_node() |> 
+  st_polygonize() |> 
+  plot()
+```
+
+
+
+
+
+
+
+
+
+
