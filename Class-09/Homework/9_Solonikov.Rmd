@@ -14,36 +14,114 @@ library(readr)
 ```{r}
 # Координаты искомых точек
 stations <- read_csv('stations.csv') |> 
-  st_as_sf(coords = c('X', 'Y'), crs = 4326)
+  st_as_sf(coords = c('X', 'Y'), crs = 4326) |> 
+  st_transform(crs = 32637)    # проецируем в UTM-37
 
 # Координаты GPS-трека отбивки территории пашни
 field_gps <- read_csv('field.csv') |> 
-  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ')
+  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ') |> 
+  st_transform(crs = 32637)    # проецируем в UTM-37
 
 # Координаты точек поискового маршрута
 route_points <- read_csv('route.csv') |> 
-  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ')
+  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ') |> 
+  st_transform(crs = 32637)    # проецируем в UTM-37
 ```
 Читаем растр Сатинского полигона:
 ```{r}
 Satino <- read_stars('Snimok.tif', NA_value = 0)
 ```
-
-
-
+Создаём полигон пашни по точкам GPS-трека:
 ```{r}
-read_csv('field.csv') |> 
-  st_as_sf(coords = c('X', 'Y', 'H'), crs = 4326, dim = 'XYZ') |>
-  summarize() |> st_cast('LINESTRING') |> st_node() |> st_polygonize() |> plot()
-  st_cast("LINESTRING") |>
-  st_node() |> 
-  st_polygonize() |> 
-  plot()
+plow <- field_gps |>
+  summarize(geometry = st_combine(geometry)) |> 
+  st_cast('POLYGON')
+
+plow |> plot()
+```
+Создаём объект линии поискового маршрута:
+```{r}
+route_line <- route_points |>
+  summarize(geometry = st_combine(geometry)) |>
+  st_cast('LINESTRING')
+
+route_line |> plot()
+```
+Создаём объект, который будет содержать точки начала и конца поискового
+маршрута:
+```{r}
+start_end <- route_points |> 
+  filter(N == 1 | N == nrow(route_points)) |> select(geometry)
+```
+Для построения координатной сетки с подписями получаем ограничивающий
+прямоугольник по растру Сатинского полигона:
+```{r}
+satino_box <- Satino |> st_bbox() |> st_as_sfc()
+```
+Координаты расположения масштабной линейки:
+```{r}
+scalebar_coords <- satino_box[[1]][[1]][1,]
+scalebar_coords[1] <- scalebar_coords[1] + 100
+```
+Находим центроид полигона пашни, чтобы разместить в этом месте подпись:
+```{r}
+plow_center <- st_centroid(plow)
 ```
 
+Создаём карту и экспортируем её в файл:
+```{r}
+# Записываем карту в файл
+png(filename = 'FieldMap.png', width = 4000, height = 4000, units = 'px',
+    res = 600)
+
+# записываем параметр отображения области построения графика по умолчанию, чтобы
+# восстановить это исходное значение позже:
+pty.default <- par('pty')
+par(pty = 's')    # делаем область построения графика квадратной
+
+plot(satino_box, # рисуем сетку
+     axes = T,
+     graticule = T,
+     cex.axis = 0.8, # уменьшим подписи, чтобы не налезали друг на друга
+     cex.main = 0.8,
+     asp = 1, # одинаковые пропорции осей
+     las = 0,
+     reset = F)
 
 
+plot(Satino |> st_rgb(), main = 'Карта полевых работ', reset = F, add = T)
+plot(route_line, col = 'yellow', add = T)
+plot(start_end, pch = 21, col = 'yellow', bg = 'red', add = T)
+plot(stations |> select(geometry), pch = 22, cex = 1.5, add = T)
+plot(plow, col = rgb(0, 1, 0, alpha = .6), lwd = .7, add = T)
+raster::scalebar(d = 500, xy = scalebar_coords,
+                 type = 'bar', divs = 2, below = 'м')    # масштабная линейка
 
+# подписываем данные:
+## искомые пункты
+text(st_coordinates(stations),
+     labels = stations$Name,
+     pos = 1,
+     col = 'white')
+## точки начала и конца маршрута
+text(st_coordinates(start_end),
+     labels = c('Начало маршрута', 'Конец маршрута'),
+     pos = 4,
+     col = 'white',
+     cex = 0.6)
+## полигон пашни
+text(st_coordinates(plow_center), 
+     labels = paste0('Пашня\n', round(st_area(plow) / 1e4, 1), '\nга'),
+     cex = 0.6
+     )
+
+# Для завершения экспорта карты в файл вызываем функцию:
+dev.off()
+```
+Восстанавливаем параметр pty по умолчанию:
+```{r}
+par(pty = pty.default)
+```
 
 
 
