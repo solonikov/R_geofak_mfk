@@ -1,0 +1,213 @@
+---
+title: "Homework 11"
+output: html_notebook
+---
+Импортируем необходимые пакеты:
+```{r}
+library(sf)
+library(stars)
+library(tmap)
+library(classInt)
+library(dplyr)
+library(rnaturalearth)
+library(eurostat)
+library(RColorBrewer)
+library(tmaptools)
+```
+# 1. Карта «Климатические пояса»
+
+Читаем данные по климатическим поясам из geopackage, а также загружаем слои
+NaturalEarth в масштабе 1:110M:
+```{r}
+climates <- st_read('data/climates.gpkg')
+
+ocean <- ne_download(scale = 110, type = 'ocean', category = 'physical',
+                     returnclass = 'sf')
+rivers <- ne_download(scale = 110, type = 'rivers_lake_centerlines',
+                      category = 'physical', returnclass = 'sf')
+lakes <- ne_download(scale = 110, type = 'lakes', category = 'physical',
+                     returnclass = 'sf')
+geolines <- ne_download(scale = 110, type = 'geographic_lines',
+                        category = 'physical', returnclass = 'sf')
+```
+Преобразуем названия климатических поясов в упорядоченный фактор для их
+правильного отображения:
+```{r}
+climates <- climates |> mutate(Type = factor(climates$Type,
+       levels = c('Арктический','Субарктический','Умеренный','Субтропический',
+                  'Тропический','Субэкваториальный','Экваториальный'),
+       ordered = T)
+)
+```
+Задаём цвета для климатических поясов: используем как основу палитру
+ColorBrewer, заменив в ней два цвета:
+```{r}
+pal <- get_brewer_pal("Spectral", n = 7, contrast = c(0, 1), plot = F)[-1:-2] |>
+          rev() |> 
+          append(c('#FF7F50', '#D22B2B'))
+```
+Выбираем только линии тропиков и полярных кругов из объекта geolines:
+```{r}
+geolines_selection <- geolines |>
+  filter(name_ru != 'Экватор' & name_ru != 'Линия перемены даты') |> 
+  # В столбце name_ru названия всех линий с большой буквы, а название южного
+  # полярного круга - с маленькой. Исправим эту ошибку:
+  mutate(name_ru = stringr::str_to_title(name_ru, locale = 'ru'))
+```
+Построение карты:
+```{r}
+# записываем в отдельную переменную желаемую проекцию
+MY_PROJ <- '+proj=wag5'
+
+tm_shape(ocean, projection = MY_PROJ) +
+  tm_fill(col = 'gray80') +
+  tm_borders(col = 'gray60') +
+tm_shape(rivers, projection = MY_PROJ) +
+  tm_lines(col = 'gray60') +
+tm_shape(lakes, projection = MY_PROJ) +
+  tm_fill(col = 'gray80') +
+  tm_borders(col = 'gray60') +
+tm_shape(climates, projection = MY_PROJ) +
+  tm_polygons('Type', palette = pal, alpha = 0.5, title = '') +
+tm_shape(geolines_selection, projection = MY_PROJ) +
+  tm_lines(col = 'gray60', lty = 'dashed', lwd = 0.5) +
+  tm_text('name_ru', col = 'gray60', size = 0.6, just = c(0.5, -0.75)) +
+tm_grid(x = seq(-150, 150, by = 30),
+              y = seq(-60, 60, by = 30),
+              lwd = 0.2,
+              col = 'black',
+              labels.cardinal = F,
+              ticks = F,
+              projection = 4326) +
+tm_layout(frame = F,
+          main.title = 'Климатические пояса',
+          main.title.position = 0.36,
+          legend.position = c('LEFT', 'BOTTOM'),
+          legend.height = .2)
+```
+# 2. Карта «Изменения площади леса в эстуарии реки Конго (2000-2012 гг)»
+
+Читаем данные растров:
+```{r}
+trees <- read_stars('data/trees.tif')
+gain <- read_stars('data/gain.tif')
+loss <- read_stars('data/loss.tif')
+mask <- read_stars('data/mask.tif') 
+```
+Выбираем из растра mask только ячейки с водными объектами, остальные заполняем
+NA-значениями:
+```{r}
+mask_selection <- mask == 2
+mask_selection[mask_selection == F] <- NA
+```
+Из растра loss выбираем только ячейки, соответствующие 2001-2012 годам. Эти
+ячейки будут заполнены единицами, остальные ячейки заполним NA:
+```{r}
+loss_selection <- loss > 0 & loss < 13
+loss_selection[loss_selection == F] <- NA
+loss_selection[loss_selection == T] <- 1
+```
+В растре gain заменим нулевые значения на NA:
+```{r}
+gain[gain == 0] <- NA
+```
+Построение карты:
+```{r}
+tm_shape(trees) +
+  tm_raster(palette = get_brewer_pal("Greens", n = 5, plot = F),
+            title = '2000 г, %',
+            legend.reverse = T,
+            legend.format = list(text.separator = '–')) + 
+tm_shape(mask_selection) +
+  tm_raster(palette = '#BFEFFF', legend.show = F) +
+tm_shape(loss_selection) +
+  tm_raster(palette = 'red', title = '', labels = 'Обезлесение к 2012 г') +
+tm_shape(gain) +
+  tm_raster(palette = 'blue', title = '', labels = 'Прирост леса к 2012 г') +
+tm_credits('Источник: Hansen/UMD/Google/USGS/NASA',
+           position = c('LEFT', 'BOTTOM'),
+           size = .5 ) +
+tm_scale_bar(position = c('RIGHT', 'BOTTOM')) +
+tm_layout(
+    main.title = 'Изменения площади леса в эстуарии реки Конго (2000-2012 гг)',
+    main.title.size = 1,
+    legend.height = .3
+    )
+```
+# 3. Карта «Протяженность и электрификация железных дорог, 2016 год»
+
+Получаем данные о железных дорогах за 2016 год для построения карты:
+```{r}
+rail_data <- get_eurostat('rail_if_line_na') |> 
+  filter(lubridate::year(time) == 2016)
+```
+
+Рассчитываем протяжённость и процент электрификации железных дорог в разных
+странах, также приводим колонки к читаемому виду с помощью label_eurostat (при
+этом сохраняем поле name с двухбуквенными кодами стран, по которому позже будем
+объединять датафрейм с геоданными):
+```{r}
+rail_data <- cbind(name = rail_data$geo, rail_data |> label_eurostat()) |> 
+  select(name, tra_infr, tra_meas, values)
+
+rail_data <- rail_data |> 
+  filter(tra_meas == 'Total') |> 
+  select(-tra_meas) |> 
+  tidyr::pivot_wider(id_cols = name,
+                     names_from = tra_infr,
+                     values_from = values) |> 
+  mutate(electrified_share = `Electrified railway lines` / Total * 100)
+```
+Объединяем полученный датафрейм с геоданными стран
+```{r}
+rail_data <- right_join(rail_data, get_eurostat_geospatial(nuts_level = '0'),
+             by = c('name' = 'geo')) |> 
+                st_as_sf()
+```
+Создаём ограничивающий прямоугольник для карты:
+```{r}
+europe_box <- st_bbox(c(xmin = -8, xmax = 43 , ymin = 33, ymax = 70),
+                      crs = st_crs(4326))
+```
+Построение карты:
+```{r}
+# записываем в отдельную переменную желаемую проекцию
+MY_PROJ <- '+proj=eqdc +lon_0=20 +lat_1=43 +lat_2=62'
+
+tm_shape(rail_data, bbox = europe_box, projection = MY_PROJ) +
+  tm_polygons('electrified_share',
+              alpha = .9,
+              legend.reverse = T,
+              lwd = .2,
+              legend.format = list(text.separator = '–'),
+              textNA =  'Нет данных',
+              title = 'Электрификация, %') +
+tm_shape(st_point_on_surface(rail_data), projection = MY_PROJ) +
+  tm_bubbles(size = 'Total',
+             scale = 2,
+             alpha = .5,
+             legend.size.is.portrait = T,
+             title.size = 'Протяжённость, км') +
+tm_credits('Данные: Eurostat',
+           position = c('left', 'bottom'),
+           size = .5) +
+tm_layout(main.title = 'Протяжённость и электрификация железных дорог, 2016 г',
+          main.title.size = 1,
+          legend.outside = T,
+          legend.title.size = 1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
