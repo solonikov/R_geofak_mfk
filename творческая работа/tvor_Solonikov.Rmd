@@ -1,0 +1,228 @@
+---
+title: "Творческая работа"
+output: html_notebook
+---
+# Введение
+Мутность воды является важным показателем её качества, а также характеристикой
+стока взвешенных наносов. По этой причине наблюдения за мутностью важны как для
+оценки экологического состояния водных объектов, так и для характеристики
+эрозионных процессов на водосборе и в русле реки.
+Целью данной работы является изучение краткосрочных (турбулентных) колебаний
+мутности воды на примере реки Сетунь. В соответствие с этой целью были решены
+следующие задачи:
+- Чтение и подготовка данных наблюдений, полученных с автоматических логгеров;
+- Очистка рядов данных от выбросов;
+- Статистическая оценка данных наблюдений;
+- Построение карты расположения постов наблюдений за уровнями воды и мутностью в
+бассейне реки Сетунь;
+- Построение карты пунктов, для которых с помощью автоматических логгеров
+получены ряды наблюдений за краткосрочными колебаниями мутности воды.
+
+# Импорт пакетов
+```{r}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(tsibble)
+library(ggplot2)
+library(Kendall)
+```
+
+
+# Чтение и подготовка данных
+## Данные наблюдений за мутностью воды в бассейне реки Сетунь
+Данные с автоматических логгеров разбиты по нескольким файлам, формат которых
+не всегда совпадает. Данные наблюдений были считаны из каждого файла отлельно и 
+затем собраны в единый ряд. 
+Примечание: данные в некоторых местах содержат пропуски, что связано с
+особенностями работы логгера, а также технические пометки. При преобразованиях
+в данных строках создаются NA, которые удаляются из датафрейма функцией na.omit.
+```{r}
+data1 <- read_csv('data/turbidity/VuSitu_2020-11-24_12-43-49_Сетунь_Журнал регистрации_Сетунь 24_11_2020-2.csv',
+                  skip = 23,
+                  show_col_types = F) |> 
+        select(1:2) |> 
+        na.omit() |> 
+        mutate(`Дата и время` = as.POSIXct(`Дата и время`)) |> 
+        magrittr::set_colnames(c('dt', 'turbidity'))
+
+data2 <- read_xlsx('data/turbidity/t_setun_20191116-20200130.xlsx',
+                    sheet = 3,
+                    col_types = c('date', 'numeric', rep('skip', 10)),
+                    col_names = c('dt', 'turbidity')) |> 
+        na.omit()
+
+data3 <-  read_log('data/turbidity/setun_19032020.log',
+                   skip = 29,
+                   show_col_types = F) |> 
+            separate(col = X1,
+                     into = c('DATE', 'TIME', 'turbidity', 'units', NA, NA, NA),
+                     sep = '_') |> 
+            mutate(dt = paste(DATE, TIME) |> as_datetime()) |> 
+            select(dt, turbidity) |> 
+            na.omit() |> 
+            mutate(turbidity = as.numeric(turbidity)) |> 
+            na.omit()
+
+data4 <- read_xlsx('data/turbidity/temp/079851_20200320_1056.xlsx', 
+                    sheet = 3,
+                    skip = 1) |> 
+          na.omit() |> 
+          magrittr::set_colnames(c('dt', 'turbidity'))
+
+data5 <- read_csv('data/turbidity/temp/VuSitu_2020-03-19_16-44-08_Сетунь_Журнал регистрации_Журнал_2020-3-19.csv',
+               skip = 23,
+               show_col_types = F) |> 
+        select(1:2) |> 
+        na.omit() |> 
+        magrittr::set_colnames(c('dt', 'turbidity')) |> 
+        mutate(dt = as.POSIXct(dt)) |> 
+        na.omit()
+
+# собираем всё в один датафрейм:
+data_turb <- rbind(data1, data2, data3, data4, data5) |> 
+  arrange(dt) |> 
+  as_tsibble(index = dt)
+```
+## Данные наблюдений за расходами воды в бассейне реки Сетунь
+В бассейне реки ведутся автоматические наблюдения за уровнем воды. По известной
+зависимости расхода воды от уровня был получен ряд расходов с частотой 30 минут.
+```{r}
+data_Q <- read_xlsx('data/Сетунь_низ_уровни.xlsx',
+                    sheet = 'Сетунь3', skip = 5) |> 
+  select(1, 8) |> 
+  magrittr::set_colnames(c('dt', 'Q')) |> 
+  as_tsibble(index = dt)
+```
+
+## Объединение датафреймов и приведение к единой временной шкале
+Ряд данных наблюдений за мутностью и расходами воды необходимо привести к единой
+временной сетке с шагом 30 минут. Для каждого ряда определим максимальное и
+минимальное время измерений и округлим их до ближайшего времени, кратного 30
+минутам. Затем сформируем последовательность временных срезов между полученными
+границами 30-минутных серий и проинтерполируем величины расхода и мутности на
+новую сетку. Продолжительность интерполируемого интервала не должна превышать
+60 минут.
+Для ряда расходов:
+```{r}
+tmin <- ceiling_date(min(data_Q$dt), unit = '30 minutes')
+tmax <- floor_date(max(data_Q$dt), unit = '30 minutes')
+
+Q_interp <- tibble(
+  datetime = seq(tmin, tmax, by = '30 min'),
+  Q = round(approx(data_Q$dt, data_Q$Q, xout = datetime)$y, 1)
+)
+
+idx <- sapply(Q_interp$datetime, \(x) match(TRUE, data_Q$dt >= x))
+
+Q_interp <- Q_interp |> 
+  mutate(before_time = datetime - data_Q$dt[idx-1],
+         after_time = data_Q$dt[idx] - datetime,
+         valid = after_time - before_time <= minutes(60))
+
+cat('Valid are ', round(100 * sum(Q_interp$valid) / nrow(Q_interp), 1), 
+    '% of interpolated values', sep = '')
+```
+Данные о расходах воды теперь приведены к регулярной временной сетке 30 минут.
+Все интерполированные значения уложились в порог 60 минут.
+
+Для мутности воды:
+```{r}
+tmin <- ceiling_date(min(data_turb$dt), unit = '30 minutes')
+tmax <- floor_date(max(data_turb$dt), unit = '30 minutes')
+
+turb_interp <- tibble(
+  datetime = seq(tmin, tmax, by = '30 min'),
+  turbidity = round(approx(data_turb$dt,
+                           data_turb$turbidity,
+                           xout = datetime)$y, 1)
+)
+
+idx <- sapply(turb_interp$datetime, \(x) match(TRUE, data_turb$dt >= x))
+
+turb_interp <- turb_interp |> 
+  mutate(before_time = datetime - data_turb$dt[idx-1],
+         after_time = data_turb$dt[idx] - datetime,
+         valid = after_time + before_time <= minutes(60))
+
+cat('Valid are ', round(100 * sum(turb_interp$valid) / nrow(turb_interp), 1), 
+    '% of interpolated values', sep = '')
+```
+Данные о мутности теперь тоже приведены к единой временной сетке, однако они
+содержат значительные временные разрывы. Заполним строки, в которых
+продолжительность интерполируемого интервала превышала 60 минут (в них столбец
+valid равен FALSE), значениями NA, а затем проанализируем пропуски:
+```{r}
+turb_interp <- mutate(turb_interp, turbidity = ifelse(valid, turbidity, NA))
+
+# функция для нахождения пропусков во временном ряду
+find_gaps = function(df, variable) {
+  df |> 
+    as_tibble() |>
+    mutate(type = if_else(is.na(df[variable]), 'gap', 'data'),
+           num = with(rle(type), rep(seq_along(lengths), lengths))) |> 
+    group_by(num) |> 
+    summarise(start_date = min(datetime),
+              end_date = max(datetime),
+              duration = end_date - start_date + 1,
+              type = first(type))
+}
+
+find_gaps(turb_interp, 'turbidity')
+```
+По таблице видно, что наблюдения за мутностью проводились в периоды с 16 ноября
+2019 г. по 20 марта 2020 г., с 24 ноября 2020 г. по 11 декабря 2020 г. и с 25
+января 2021 г. по 5 марта 2021 г. Ряд разделяют на три части значительные
+временные разрывы.
+Объединим ряды мутности и расходов воды и рассчитаем основные статистические
+характеристики:
+```{r}
+# объединяем в один датафрейм
+df <- inner_join(Q_interp, turb_interp, by = "datetime") |> 
+  select(datetime, Q, turbidity) |> 
+  filter(!is.na(turbidity))
+
+# Рассчитаем средние, стандартные отклонения, разброс, коэффициент вариации,
+# наличие или отсутствие статистически значимого монотонного тренда (тест Манна-
+# Кендалла) для расхода и мутности
+df |> 
+  summarize(Q_mean = mean(Q),
+            Q_range = max(Q) - min(Q),
+            Q_sd = sd(Q),
+            Q_cv = Q_sd / Q_mean,
+            #Q_trend = MannKendall(Q),
+            turb_mean = mean(turbidity),
+            turb_range = max(turbidity) - min(turbidity),
+            turb_sd = sd(turbidity),
+            turb_cv = turb_sd / turb_mean,
+            #turb_trend = MannKendall(turbidity),
+            T2T1 = abs(sum(lag(turbidity, 1) - turbidity,
+                        na.rm = T) / (nrow(df) - 1)),
+            T2T1_by_range = T2T1 / turb_range)
+```
+# TODO: закончить задание
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
