@@ -1,0 +1,223 @@
+---
+title: "Homework 14 third try"
+output: html_notebook
+---
+# Импортируем необходимые пакеты
+```{r}
+library(sf)
+library(stars)
+library(tidyverse)
+library(akima)
+library(gstat)
+library(fields)
+library(rnaturalearth)
+library(ggplot2)
+library(ggspatial)
+```
+# Чтение и подготовка данных
+Чтение входных данных:
+```{r}
+biomass <- read_delim('copepod__b400-compilation.txt', skip = 3,
+              show_col_types = F, col_types = cols(.default = col_number())) |>
+           slice(-1)
+seas <- st_read('World_Seas_IHO_v3/World_Seas_IHO_v3.shp')
+land <- ne_download(scale = 50, type = 'land', category = 'physical',
+                    returnclass = 'sf')
+```
+Фильтруем таблицу морей так, чтобы в ней осталось только Охотское море:
+```{r}
+okhotsk <- seas %>% filter(., grepl(pattern = 'Okhotsk', .$NAME))
+```
+Проецируем данные:
+```{r}
+okhotsk_projected <- st_transform(okhotsk, crs = '+proj=eqc')
+land_projected <- st_transform(land, crs = '+proj=eqc')
+```
+Получаем ограничивающий прямоугольник для Охотского моря:
+```{r}
+box_okhotsk_projected <- st_bbox(okhotsk_projected)
+```
+Фильтруем и проецируем данные по биомассе:
+```{r}
+biomass_projected <- biomass %>% filter(LOWER_Z <= 200 &
+                  MON >= 6 &
+                  MON <= 8 &
+                  YEAR >= 1949 &
+                  YEAR <= 1951) %>%
+  rename(vpv = `VALUE-per-volu`) %>%
+  st_as_sf(coords = c('LONGITDE', 'LATITUDE'), crs = st_crs(okhotsk)) %>%
+  st_transform(crs = '+proj=eqc') %>%
+  .[okhotsk_projected,]    # обрезка по полигону Охотского моря
+```
+Получим заранее координаты исходных точек и точек сетки, по которой будет
+производиться интерполяция:
+```{r}
+# сетка интерполяции
+mygrid <- st_as_stars(box_okhotsk_projected, dx = 10000, dy = 10000)
+
+coords_init <- st_coordinates(biomass_projected) # координаты исходных точек
+coords_grid <- st_coordinates(mygrid) # координаты точек сетки интерполяции
+```
+# Интерполяция методом Акимы
+```{r}
+vpv_levels <- c(0,50,100,200,300,500,700,1000) # интервалы разбиения шкалы
+
+mygrid <- mygrid |>     # интерполяция методом Акимы
+            mutate(z_spline = interpp(x = coords_init[, 1],
+                                      y = coords_init[, 2],
+                                      z = biomass_projected$vpv,
+                                      xo = coords_grid[, 1],
+                                      yo = coords_grid[, 2],
+                                      linear = F,
+                                      extrap = T,
+                                      duplicate = 'mean')$z) %>%
+            .[okhotsk_projected]
+
+# создаём слой контуров для отображения на карте по растровому объекту mygrid
+# класса stars с результатами интерполяции
+cont_spline <- st_contour(mygrid,
+                          breaks = vpv_levels,
+                          contour_lines = T)
+cont_spline <- st_contour(mygrid['z_spline'],
+                          breaks = vpv_levels,
+                          contour_lines = T)
+```
+Построение карты:
+```{r}
+# цвета для легенды
+vpv_ncolors <- length(vpv_levels) - 1
+vpv_colors <- colorRampPalette(c("#F7FBFF", "#4292C6", "#35978F")) 
+
+# Создаём слой градусной сетки:
+graticule <- st_graticule(lon = seq(135, 165, 5), lat = seq(45, 60, 5)) |>
+  st_transform(crs = '+proj=eqc') |>
+  st_crop(box_okhotsk_projected)
+
+ggplot() +
+  geom_stars(data = cut(mygrid['z_spline'], breaks = vpv_levels), alpha = .9) +
+  scale_fill_manual(name = 'мг/куб.м',
+                    values = vpv_colors(vpv_ncolors),
+                    guide = guide_legend(reverse = TRUE),
+                    na.translate = FALSE,
+                    labels = paste(vpv_levels[-8], '-', vpv_levels[-1])) +
+  geom_sf(data = cont_spline, color = 'black', linewidth = .2) +
+  geom_sf(data = biomass_projected, color = 'black', size = .5) +
+  geom_sf(data = land_projected |> st_crop(box_okhotsk_projected),
+          fill = 'gray80') +
+  geom_sf(data = graticule, color = 'grey60', linetype = 'dotted') +
+  theme(panel.background = element_rect(fill = 'white'),
+        plot.margin = margin(0, 0, 0, 0, "cm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(title = 'Биомасса зоопланктона (июнь — август, глубины 0-200 м)',
+       subtitle = 'Интерполяция на основе триангуляции (метод Акимы)',
+       caption = 'Карта составлена по данным COPEPOD,
+       экспедиции 1949-1951 гг.') +
+  annotation_scale(bar_cols = c('gray', 'white'),
+                   location = 'br',
+                   height = unit(.15, "cm"))
+```
+# Интерполяция методом обратно взвешенных расстояний (степень 2)
+```{r}
+mygrid <- mygrid |> 
+            mutate(z_idw = idw(vpv ~ 1,    # интерполяция методом IDW
+                               locations = biomass_projected,
+                               newdata = mygrid,
+                               idp = 2.0) |> pull(var1.pred) |> as('vector'))
+
+# создаём слой контуров для отображения на карте по растровому объекту mygrid
+# класса stars с результатами интерполяции
+cont_idw <- st_contour(mygrid['z_idw'],
+                       breaks = vpv_levels,
+                       contour_lines = T)
+```
+Построение карты:
+```{r}
+ggplot() +
+  geom_stars(data = cut(mygrid['z_idw'], breaks = vpv_levels), alpha = .9) +
+  scale_fill_manual(name = 'мг/куб.м',
+                    values = vpv_colors(vpv_ncolors),
+                    guide = guide_legend(reverse = TRUE),
+                    na.translate = FALSE,
+                    labels = paste(vpv_levels[-8], '-', vpv_levels[-1])) +
+  geom_sf(data = cont_idw, color = 'black', linewidth = .2) +
+  geom_sf(data = biomass_projected, color = 'black', size = .5) +
+  geom_sf(data = land_projected |> st_crop(box_okhotsk_projected),
+          fill = 'gray80') +
+  geom_sf(data = graticule, color = 'grey60', linetype = 'dotted') +
+  theme(panel.background = element_rect(fill = 'white'),
+        plot.margin = margin(0, 0, 0, 0, "cm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(title = 'Биомасса зоопланктона (июнь — август, глубины 0-200 м)',
+       subtitle = 'Интерполяция методом обратно взвешенных расстояний',
+       caption = 'Карта составлена по данным COPEPOD,
+       экспедиции 1949-1951 гг.') +
+  annotation_scale(bar_cols = c('gray', 'white'),
+                   location = 'br',
+                   height = unit(.15, "cm"))
+```
+# Интерполяция методом радиальных базисных функций (сплайны с натяжением)
+```{r}
+pred <- Tps(coords_init,
+            biomass_projected$vpv,
+            scale.type = 'unscaled',
+            lambda = 0)
+
+mygrid <- mygrid |> 
+  mutate(z_tps = predict(pred, coords_grid)) %>%
+  .[okhotsk_projected]
+
+# создаём слой контуров для отображения на карте
+cont_tps <- st_contour(mygrid['z_tps'],
+                       breaks = vpv_levels,
+                       contour_lines = T)
+```
+Построение карты:
+```{r}
+ggplot() +
+  geom_stars(data = cut(mygrid['z_tps'], breaks = vpv_levels), alpha = .9) +
+  scale_fill_manual(name = 'мг/куб.м',
+                    values = vpv_colors(vpv_ncolors),
+                    guide = guide_legend(reverse = TRUE),
+                    na.translate = FALSE,
+                    labels = paste(vpv_levels[-8], '-', vpv_levels[-1])) +
+  geom_sf(data = cont_tps, color = 'black', linewidth = .2) +
+  geom_sf(data = biomass_projected, color = 'black', size = .5) +
+  geom_sf(data = land_projected |> st_crop(box_okhotsk_projected),
+          fill = 'gray80') +
+  geom_sf(data = graticule, color = 'grey60', linetype = 'dotted') +
+  theme(panel.background = element_rect(fill = 'white'),
+        plot.margin = margin(0, 0, 0, 0, "cm"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  labs(title = 'Биомасса зоопланктона (июнь — август, глубины 0-200 м)',
+       subtitle = 'Интерполяция методом радиальных базисных функций',
+       caption = 'Карта составлена по данным COPEPOD,
+       экспедиции 1949-1951 гг.') +
+  annotation_scale(bar_cols = c('gray', 'white'),
+                   location = 'br',
+                   height = unit(.15, "cm"))
+```
+# Вывод
+В работе по данным о распределении биомассы зоопланктона в Охотском море
+за 1949-1951 гг. была проведена детерминистическая интерполяция по нерегулярно
+расположенным точкам с использованием трёх различных методов: интерполяция на
+основе триангуляции (метод Акимы), интерполяция методом обратно взвешенных
+расстояний (степень 2) и интерполяция методом радиальных базисных функций
+(сплайны с натяжением). Результаты, полученные с помощью каждого метода, были 
+визуализированы в виде карт. 
+Карта, полученная по результатам интерполяции методом Акимы выглядит несколько
+угловато, заметны фестончатые изгибы линий на рёбрах триангуляции, что вряд ли
+соответствует реальному пространственному распределению биомассы.
+Результат интреполяции методом обратно взвешенных расстояний также выглядит
+нереалистично за счёт эффекта "бычьих глаз", когда вокруг точек исходных данных
+формируются многочисленные замкнутые изолинии.
+Характер изолиний на карте, полученной методом радиальных базисных функций,
+наилучшим образом отражает реальное распределение биомассы. Ход изолиний
+плавный, отсутствуют артефакты в виде "бычьих глаз". При этом данный метод
+интерполяции наиболее гибкий, так как позволяет самостоятельно выбирать
+радиальные функции. Использование в качестве радиальной функции сплайна
+минимальной кривизны позволяет получить гладкую поверхность без резких скачков и
+понижений, что выгодно отличает метод от метода обратно взвешенных расстояний.
+

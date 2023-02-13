@@ -1,0 +1,147 @@
+---
+title: "Homework 14"
+output: html_notebook
+---
+# Подключение пакетов
+Импортируем необходимые пакеты:
+```{r}
+library(sf)
+library(stars)
+library(tidyverse)
+library(akima)
+library(gstat)
+library(fields)
+library(rnaturalearth)
+library(ggplot2)
+library(ggspatial)
+```
+# Чтение входных данных
+```{r}
+biomass <- read_delim('copepod__b400-compilation.txt', skip = 3,
+              show_col_types = F, col_types = cols(.default = col_number())) |>
+           slice(-1)
+seas <- st_read('World_Seas_IHO_v3/World_Seas_IHO_v3.shp')
+land <- ne_download(scale = 50, type = 'land', category = 'physical',
+                    returnclass = 'sf')
+```
+# Фильтрация таблицы морей
+Фильтруем таблицу морей так, чтобы в ней осталось только Охотское море:
+```{r}
+okhotsk <- seas %>% filter(., grepl(pattern = 'Okhotsk', .$NAME))
+```
+# Фильтрация таблицы биомассы
+Отфильтруем таблицу биомассы так, чтобы остались точки:
+— координаты которых в полях LONGITDE и LATITUDE попадают в ограничивающий
+прямоугольник Охотского моря;
+— у которых нижняя граница наблюдений (LOWER_Z) располагается на глубже 200 м;
+— которые относятся к летним месяцам (6-8)
+— которые попадают в промежуток годов 1949-1951
+```{r}
+okhotsk_box <- st_bbox(okhotsk) # создаём ограничивающий прямоугольник моря
+
+# фильтруем таблицу
+biomass_okhotsk <- biomass |>
+                        filter(LATITUDE >= okhotsk_box$ymin &
+                                 LATITUDE <= okhotsk_box$ymax &
+                                 LONGITDE >= okhotsk_box$xmin &
+                                 LONGITDE <= okhotsk_box$xmax &
+                                 LOWER_Z <= 200 &
+                                 MON >= 6 &
+                                 MON <= 8 &
+                                 YEAR >= 1949 &
+                                 YEAR <= 1951)
+```
+# Превращение точек в sf, выборка в пределах Охотского моря
+Превращение отфильтрованных точек в объекты sf и их точная выборка в пределах
+полигона Охотского моря:
+```{r}
+biomass_okhotsk <- biomass_okhotsk %>%
+  st_as_sf(coords = c('LONGITDE', 'LATITUDE'), crs = st_crs(okhotsk)) %>%
+  .[okhotsk,]
+```
+# Проецирование
+Перепроецирование точки, полигон моря и сушу в цилиндрическую равнопромежуточную
+проекцию:
+```{r}
+biomass_okhotsk <- st_transform(biomass_okhotsk, crs = '+proj=eqc')
+okhotsk <- st_transform(okhotsk, crs = '+proj=eqc')
+land <- st_transform(land, crs = '+proj=eqc')
+```
+# Построение регулярной сетки
+Построение регулярной сетки типа stars для интерполяции. Сетка будет покрывать
+Охотское море (перепроецированное) целиком с шагом 10 км по обоим направлениям:
+```{r}
+newbox <- st_bbox(okhotsk)
+mygrid <- st_as_stars(newbox, dx = 10000, dy = 10000)
+```
+Получим заранее координаты исходных точек и точек сетки, по которой будет
+производиться интерполяция:
+```{r}
+coords_init <- st_coordinates(biomass_okhotsk)
+coords_grid <- st_coordinates(mygrid)
+```
+# Интерполяция
+## а) Интерполяция на основе триангуляции (метод Акимы)
+```{r}
+biomass_okhotsk <-  biomass_okhotsk |> mutate(vpv = `VALUE-per-volu`)
+vpv_levels <- c(0, 50, 100, 200, 300, 500, 700, 1000)
+vpv_ncolors <- length(vpv_levels) - 1
+vpv_colors <- colorRampPalette(c("white", "dodgerblue", "dodgerblue4"))
+land_okhotsk <- st_crop(land |> st_geometry(), newbox)
+
+mygrid <- mygrid |> mutate(z_spline = interpp(x = coords_init[, 1],
+                                              y = coords_init[, 2],
+                                              z = biomass_okhotsk$vpv,
+                                              xo = coords_grid[, 1],
+                                              yo = coords_grid[, 2],
+                                              linear = F,
+                                              extrap = F,
+                                              duplicate = 'mean')$z)
+cont_spline <- st_contour(mygrid['z_spline'],
+                          breaks = vpv_levels,
+                          contour_lines = T)
+graticule <- st_crop(st_graticule(lon = seq(135, 165, 5), lat = seq(45, 60, 5)),
+                     okhotsk_box)
+```
+
+
+```{r}
+ggplot() +
+  geom_sf(data = land_okhotsk, color = 'gray80') +
+  geom_stars(data = cut(mygrid['z_spline'], breaks = vpv_levels)) +
+  scale_fill_manual(name = 'мг/куб.м',
+                    values = vpv_colors(vpv_ncolors),
+                    guide = guide_legend(reverse = T),
+                    na.translate = F)
+  geom_sf(data = cont_spline, color = 'black', size = .2) +
+  geom_sf(data = biomass_okhotsk, color = 'red', size = .5) +
+  geom_sf(data = land_okhotsk, fill = NA) 
+  # geom_sf(data = graticule, color = 'grey60')
+  # geom_sf(
+  #   mygrid$z_spline |> stars::st_as_stars() |> raster::rasterToContour(levels = vpv_levels) |> st_as_sf()
+  # )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

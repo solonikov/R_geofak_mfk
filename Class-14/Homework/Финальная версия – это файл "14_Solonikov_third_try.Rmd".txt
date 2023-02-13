@@ -1,0 +1,1 @@
+Финальная версия – это файл "14_Solonikov_third_try.Rmd"
