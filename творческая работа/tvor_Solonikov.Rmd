@@ -1,6 +1,10 @@
 ---
 title: "Творческая работа"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
+  always_allow_html: yes
+  html_notebook: default
 ---
 # Введение
 Мутность воды является важным показателем её качества, а также характеристикой
@@ -10,13 +14,13 @@ output: html_notebook
 Целью данной работы является изучение краткосрочных (турбулентных) колебаний
 мутности воды на примере реки Сетунь. В соответствие с этой целью были решены
 следующие задачи:
-- Чтение и подготовка данных наблюдений, полученных с автоматических логгеров;
-- Очистка рядов данных от выбросов;
-- Статистическая оценка данных наблюдений;
-- Построение карты расположения постов наблюдений за уровнями воды и мутностью в
-бассейне реки Сетунь;
-- Построение карты пунктов, для которых с помощью автоматических логгеров
-получены ряды наблюдений за краткосрочными колебаниями мутности воды.
+<ul>1. Чтение и подготовка данных наблюдений, полученных с автоматических логгеров;
+2. Осреднение данных и приведение к регулярной временной сетке;
+3. Статистическая оценка данных наблюдений;
+4. Построение карты расположения постов наблюдений за уровнями воды и мутностью
+в бассейне реки Сетунь;
+5. Построение карты пунктов, для которых с помощью автоматических логгеров
+получены ряды наблюдений за краткосрочными колебаниями мутности воды.</ul>
 
 # Импорт пакетов
 ```{r}
@@ -26,6 +30,11 @@ library(lubridate)
 library(tsibble)
 library(ggplot2)
 library(Kendall)
+library(tmap)
+library(tmaptools)
+library(sf)
+library(rnaturalearth)
+library(ggrepel)
 ```
 
 
@@ -181,31 +190,175 @@ find_gaps(turb_interp, 'turbidity')
 df <- inner_join(Q_interp, turb_interp, by = "datetime") |> 
   select(datetime, Q, turbidity) |> 
   filter(!is.na(turbidity))
-
-# Рассчитаем средние, стандартные отклонения, разброс, коэффициент вариации,
-# наличие или отсутствие статистически значимого монотонного тренда (тест Манна-
-# Кендалла) для расхода и мутности
+```
+Рассчитаем средние, стандартные отклонения, разброс, коэффициент вариации,
+наличие или отсутствие статистически значимого монотонного тренда (тест Манна-
+Кендалла) для расхода и мутности. Для мутности также рассчитаем индексы ψ и ζ.
+Индекс ψ определяется формулой 
+$\psi = \bigg|\frac{1}{n-1}\sum\limits_{i=1}^{n-1}(x_{i+1} - x_i)\bigg|$
+где $x_{i+1}$ и ${x_i}$ - соседние измерения мутности. Данный индекс отражает
+величину быстрых изменений мутности и характеризует её турбулентные колебания.
+Индекс ζ определяется формулой
+$\zeta = \frac{\psi}{\max x_i - \min x_i}$
+Данный индекс характеризует выраженность турбулентных колебаний мутности на фоне
+её общих флуктуаций и является мерой соотношения турбулентных и синоптических
+колебаний.
+```{r}
 df |> 
   summarize(Q_mean = mean(Q),
             Q_range = max(Q) - min(Q),
             Q_sd = sd(Q),
             Q_cv = Q_sd / Q_mean,
-            #Q_trend = MannKendall(Q),
+            Q_trend_tau = MannKendall(Q)$tau[1],
+            Q_trend_p = MannKendall(Q)$sl[1],
             turb_mean = mean(turbidity),
             turb_range = max(turbidity) - min(turbidity),
             turb_sd = sd(turbidity),
             turb_cv = turb_sd / turb_mean,
-            #turb_trend = MannKendall(turbidity),
-            T2T1 = abs(sum(lag(turbidity, 1) - turbidity,
+            turb_trend_tau = MannKendall(turbidity)$tau[1],
+            turb_trend_p = MannKendall(turbidity)$sl[1],
+            psi = abs(sum(lag(turbidity, 1) - turbidity,
                         na.rm = T) / (nrow(df) - 1)),
-            T2T1_by_range = T2T1 / turb_range)
+            zeta = psi / turb_range) |> 
+  pivot_longer(cols = everything(), names_to = 'metric', values_to = 'value')
 ```
-# TODO: закончить задание
+Вычисленные характеристики можно использовать для дальнейшего сопоставления с
+другими постами наблюдений.
+Построим графики плотности распределения расхода воды и мутности:
+```{r}
+# расход воды
+ggplot(data = df, aes(x = Q)) +
+  geom_density(linewidth = .4, fill = '#31b8c4', alpha = .4) +
+  labs(x = 'Расход воды', y = 'Плотность распределения') +
+  theme_bw()
+```
+```{r}
+# мутность
+ggplot(data = df, aes(x = turbidity)) +
+  geom_density(linewidth = .4, fill = '#cd4a4c', alpha = .4) +
+    labs(x = 'Мутность воды', y = 'Плотность распределения') +
+  theme_bw()
+```
 
+Расход воды не является надёжным предиктором мутности, однако всё же рассмотрим
+коэффициенты корреляции между мутностью и расходом в то же время и взятым с
+некоторым временным лагом:
+```{r}
+df |> 
+  summarize(
+    cor0 = cor(turbidity, Q),    # без сдвига по времени
+    cor10 = cor(turbidity, lag(Q, 10),
+              use = 'complete.obs'),    # сдвиг на 10 наблюдений
+    cor20 = cor(turbidity, lag(Q, 20),
+              use = 'complete.obs'),    # сдвиг на 20 наблюдений
+    cor30 = cor(turbidity, lag(Q, 30),
+              use = 'complete.obs'),    # сдвиг на 30 наблюдений
+    cor40 = cor(turbidity, lag(Q, 40),
+              use = 'complete.obs')    # сдвиг на 40 наблюдений
+  ) |> 
+  pivot_longer(cols = everything(), names_to = 'metric', values_to = 'value')
+```
+Как и предполагалось, корреляции между показателями не наблюдается.
 
+# Построение карты расположения постов наблюдений в бассейне реки Сетунь
+По известным координатам пунктов наблюдений создадим слой точек:
+```{r}
+loggers <- matrix(c(
+  55.729943, 37.529679, 'уровень воды',
+  55.709917, 37.452927, 'уровень воды',
+  55.696543, 37.397338, 'уровень воды',
+  55.729085, 37.536159, 'мутность воды',
+  55.714330, 37.444141, 'мутность воды'
+), ncol = 3, byrow = T) |> 
+  data.frame() |>
+  magrittr::set_colnames(c('lat', 'lon', 'тип логгера')) |> 
+  mutate(lat = as.numeric(lat), lon = as.numeric(lon)) |> 
+  st_as_sf(coords = c('lon', 'lat'), crs = 4326)
+```
+По слою точек построим интерактивную карту:
+```{r}
+tmap_mode('view')
+tmap_options(check.and.fix = TRUE)
 
+tm_basemap('OpenStreetMap') +
+  tm_shape(loggers) +
+  tm_dots(col = 'тип логгера', size = .07, palette = get_brewer_pal("Set1", n = 2, plot = F))
+```
+# Построение карты пунктов наблюдений за мутностью воды
+Построим карту пунктов, для которых с помощью автоматических логгеров получены
+ряды наблюдений за краткосрочными колебаниями мутности воды. Получим слои точек
+из шейп-файлов:
+```{r}
+shp1 <- st_read('data/loggers_shp/loggery_ot_SR/loggery_ot_SR.shp', quiet = T)
+shp2 <- st_read('data/loggers_shp/turb_stations/turb_stations.shp', quiet = T)
+```
+Получим слои стран, океана, береговой линии и т.п. для отображения на карте:
+```{r}
+countries <- ne_countries(scale = 50, returnclass = 'sf')
+coast <- ne_coastline(scale = 50, returnclass = 'sf')
+ocean <- ne_download(scale = 50,
+                    type = 'ocean',
+                    category = 'physical',
+                    returnclass = 'sf')
+rivers <- ne_download(scale = 50,
+                     type = 'rivers_lake_centerlines',
+                     category = 'physical',
+                     returnclass = 'sf')
+lakes <- ne_download(scale = 50,
+                    type = 'lakes',
+                    category = 'physical',
+                    returnclass = 'sf')
+borders <- ne_download(scale = 50,
+                       type = 'admin_0_boundary_lines_land',
+                       returnclass = 'sf')
 
+lyr50 = lst(ocean, coast, countries, 
+             rivers, lakes, borders)
+```
+Построение карты:
+```{r}
+# код проекции
+proj <- '+proj=aea +lat_0=30 +lon_0=95 +lat_1=15 +lat_2=65 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs +type=crs'
 
+# создаём ограничивающий прямоугольник, чтобы затем задать по нему границы карты
+box <- st_bbox(lyr50$countries |>
+                 filter(admin == 'Russia') |>
+                 st_transform(crs = proj))
+
+ggplot() +
+  geom_sf(data = lyr50$countries, color = NA) +
+  geom_sf(data = lyr50$borders, linewidth = .2) +
+  geom_sf(data = lyr50$ocean, 
+          fill = 'azure', color = NA) +
+  geom_sf(data = lyr50$coast, 
+          size = .2, color = 'steelblue') +
+  geom_sf(data = lyr50$rivers, color = 'steelblue', linewidth = .3) +
+  geom_sf(data = lyr50$lakes, fill = 'azure', color = 'steelblue') +
+  geom_sf(data = shp1, color = '#b03f35', size = 2) +
+  geom_label_repel(data = shp1,
+                   stat = "sf_coordinates",
+                   aes(label = podpis, geometry = geometry),
+                   size = 3.5,
+                   label.size = NA,
+                   label.padding = .1,
+                   fill = alpha("white", 0.7)) +
+  geom_sf(data = shp2, color = '#b03f35', size = 2) +
+  geom_label_repel(data = shp2,
+                   stat = "sf_coordinates",
+                   aes(label = Река, geometry = geometry),
+                   size = 3.5,
+                   label.size = NA,
+                   label.padding = .1,
+                   fill = alpha("white", 0.7)) +
+  coord_sf(crs = proj,
+           xlim = c(box[1], box[3]),
+           ylim = c(box[2], box[4])) +
+  theme_void() +
+  ggspatial::annotation_scale(bar_cols = c('gray', 'white'),
+                   location = 'br',
+                   height = unit(.15, "cm")) +
+  labs(title = 'Пункты автоматических измерений мутности воды')
+```
 
 
 
